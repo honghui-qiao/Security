@@ -4,7 +4,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Security.Claims;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -103,7 +106,8 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
                             Logger.TokenValidationFailed(token, ex);
 
                             // Refresh the configuration for exceptions that may be caused by key rollovers. The user can also request a refresh in the event.
-                            if (Options.RefreshOnIssuerKeyNotFound && ex.GetType().Equals(typeof(SecurityTokenSignatureKeyNotFoundException)))
+                            if (Options.RefreshOnIssuerKeyNotFound && Options.ConfigurationManager != null
+                                && ex.GetType().Equals(typeof(SecurityTokenSignatureKeyNotFoundException)))
                             {
                                 Options.ConfigurationManager.RequestRefresh();
                             }
@@ -197,7 +201,38 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
             Response.StatusCode = 401;
             Response.Headers.Append(HeaderNames.WWWAuthenticate, Options.Challenge);
 
+            var authResult = await HandleAuthenticateOnceAsync();
+            if (authResult.Failure != null)
+            {
+                if (authResult.Failure is AggregateException)
+                {
+                    var agEx = authResult.Failure as AggregateException;
+                    foreach (var ex in agEx.InnerExceptions)
+                    {
+                        ReportFailure(ex);
+                    }
+                }
+                else
+                {
+                    ReportFailure(authResult.Failure);
+                }
+            }
+
             return false;
+        }
+
+        private void ReportFailure(Exception ex)
+        {
+            var failureType = ex.GetType().GetTypeInfo();
+            // For certain error types, inform the client why the login failed
+            foreach (var reportableException in Options.ReportableFailures)
+            {
+                if (failureType.Equals(reportableException) || failureType.IsSubclassOf(reportableException))
+                {
+                    Response.Headers.Append("X-Authentication-Failure", EncodeHeaderValue(ex.Message));
+                    break;
+                }
+            }
         }
 
         protected override Task HandleSignOutAsync(SignOutContext context)
@@ -208,6 +243,26 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
         protected override Task HandleSignInAsync(SignInContext context)
         {
             throw new NotSupportedException();
+        }
+
+        // Percent encode anything outside of the basic ASCII set so we can put it in a header.
+        // Don't do a full UrlEncode because we still want it to be legible.
+        private static string EncodeHeaderValue(string headerValue)
+        {
+            var builder = new StringBuilder(headerValue.Length);
+            foreach (char ch in headerValue)
+            {
+                // ASCII 20-7E. No control characters or Unicode.
+                if (' ' <= ch && ch <= '~')
+                {
+                    builder.Append(ch);
+                }
+                else
+                {
+                    builder.Append(UrlEncoder.Default.Encode(ch.ToString()));
+                }
+            }
+            return builder.ToString();
         }
     }
 }

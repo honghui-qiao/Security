@@ -118,5 +118,21 @@ namespace Microsoft.AspNetCore.Builder
         /// <see cref="Http.Authentication.AuthenticationProperties"/> after a successful authorization.
         /// </summary>
         public bool SaveToken { get; set; } = true;
+
+        /// <summary>
+        /// Authentication failures with one of these exception types, or types derived from these, will have their messages
+        /// included in a 'X-Authentication-Failure' response header.
+        /// </summary>
+        public ICollection<Type> ReportableFailures { get; set; } = new List<Type>()
+        {
+            typeof(SecurityTokenInvalidAudienceException),
+            typeof(SecurityTokenInvalidIssuerException),
+            typeof(SecurityTokenNoExpirationException),
+            typeof(SecurityTokenInvalidLifetimeException),
+            typeof(SecurityTokenNotYetValidException),
+            typeof(SecurityTokenExpiredException),
+            typeof(SecurityTokenInvalidSignatureException),
+            typeof(SecurityTokenSignatureKeyNotFoundException),
+        };
     }
 }

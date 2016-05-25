@@ -3,8 +3,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -140,6 +142,70 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
 
             var response = await SendAsync(server, "http://example.com/oauth", "Bearer someblob");
             Assert.Equal(HttpStatusCode.Unauthorized, response.Response.StatusCode);
+            Assert.Equal("", response.ResponseText);
+        }
+
+        [Theory]
+        [InlineData(typeof(SecurityTokenInvalidAudienceException))]
+        [InlineData(typeof(SecurityTokenInvalidIssuerException))]
+        [InlineData(typeof(SecurityTokenNoExpirationException))]
+        [InlineData(typeof(SecurityTokenInvalidLifetimeException))]
+        [InlineData(typeof(SecurityTokenNotYetValidException))]
+        [InlineData(typeof(SecurityTokenExpiredException))]
+        [InlineData(typeof(SecurityTokenInvalidSignatureException))]
+        [InlineData(typeof(SecurityTokenSignatureKeyNotFoundException))]
+        public async Task ExceptionReportedInHeaderForAuthenticationFailures(Type errorType)
+        {
+            var options = new JwtBearerOptions
+            {
+                AutomaticAuthenticate = true
+            };
+            options.SecurityTokenValidators.Clear();
+            options.SecurityTokenValidators.Add(new InvalidTokenValidator(errorType));
+            var server = CreateServer(options);
+
+            var response = await SendAsync(server, "http://example.com/oauth", "Bearer someblob");
+            Assert.Equal(HttpStatusCode.Unauthorized, response.Response.StatusCode);
+            Assert.Equal(errorType.Name, response.Response.Headers.GetValues("X-Authentication-Failure").First());
+            Assert.Equal("", response.ResponseText);
+        }
+
+        [Theory]
+        [InlineData(typeof(ArgumentException))]
+        public async Task ExceptionNotReportedInHeaderForOtherFailures(Type errorType)
+        {
+            var options = new JwtBearerOptions
+            {
+                AutomaticAuthenticate = true
+            };
+            options.SecurityTokenValidators.Clear();
+            options.SecurityTokenValidators.Add(new InvalidTokenValidator(errorType));
+            var server = CreateServer(options);
+
+            var response = await SendAsync(server, "http://example.com/oauth", "Bearer someblob");
+            Assert.Equal(HttpStatusCode.Unauthorized, response.Response.StatusCode);
+            Assert.False(response.Response.Headers.Contains("X-Authentication-Failure"));
+            Assert.Equal("", response.ResponseText);
+        }
+
+        [Fact]
+        public async Task ExceptionsReportedInHeaderForMultipleAuthenticationFailures()
+        {
+            var options = new JwtBearerOptions
+            {
+                AutomaticAuthenticate = true
+            };
+            options.SecurityTokenValidators.Clear();
+            options.SecurityTokenValidators.Add(new InvalidTokenValidator(typeof(SecurityTokenInvalidAudienceException)));
+            options.SecurityTokenValidators.Add(new InvalidTokenValidator(typeof(SecurityTokenSignatureKeyNotFoundException)));
+            var server = CreateServer(options);
+
+            var response = await SendAsync(server, "http://example.com/oauth", "Bearer someblob");
+            Assert.Equal(HttpStatusCode.Unauthorized, response.Response.StatusCode);
+            var values = response.Response.Headers.GetValues("X-Authentication-Failure");
+            Assert.Equal(2, values.Count());
+            Assert.Equal(nameof(SecurityTokenInvalidAudienceException), values.First());
+            Assert.Equal(nameof(SecurityTokenSignatureKeyNotFoundException), values.Skip(1).First());
             Assert.Equal("", response.ResponseText);
         }
 
@@ -352,7 +418,15 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
         {
             public InvalidTokenValidator()
             {
+                ExceptionType = typeof(SecurityTokenException);
             }
+
+            public InvalidTokenValidator(Type exceptionType)
+            {
+                ExceptionType = exceptionType;
+            }
+
+            public Type ExceptionType { get; set; }
 
             public bool CanValidateToken => true;
 
@@ -366,7 +440,9 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
 
             public ClaimsPrincipal ValidateToken(string securityToken, TokenValidationParameters validationParameters, out SecurityToken validatedToken)
             {
-                throw new SecurityTokenException("InvalidToken");
+                var constructor = ExceptionType.GetTypeInfo().GetConstructor(new[] { typeof(string) });
+                var exception = (Exception)constructor.Invoke(new[] { ExceptionType.Name });
+                throw exception;
             }
         }
 

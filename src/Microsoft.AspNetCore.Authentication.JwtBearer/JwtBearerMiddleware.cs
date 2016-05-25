@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Builder;
@@ -55,6 +56,11 @@ namespace Microsoft.AspNetCore.Authentication.JwtBearer
             if (Options.Events == null)
             {
                 Options.Events = new JwtBearerEvents();
+            }
+
+            if (Options.ReportableFailures == null)
+            {
+                Options.ReportableFailures = new List<Type>(0);
             }
 
             if (string.IsNullOrEmpty(Options.TokenValidationParameters.ValidAudience) && !string.IsNullOrEmpty(Options.Audience))
